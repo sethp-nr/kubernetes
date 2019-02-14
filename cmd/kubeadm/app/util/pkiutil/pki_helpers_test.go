@@ -17,6 +17,8 @@ limitations under the License.
 package pkiutil
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -48,7 +50,7 @@ Q3+eWlA1YdqEBwvp3NEQI9BtMnzxJVWA5dvYluMNllsV/q8s2IEEAFG9
 -----END CERTIFICATE REQUEST-----`
 
 func TestNewCertificateAuthority(t *testing.T) {
-	cert, key, err := NewCertificateAuthority(&certutil.Config{CommonName: "kubernetes"})
+	cert, key, err := NewCertificateAuthority(&certutil.Config{CommonName: "kubernetes"}, "rsa")
 
 	if cert == nil {
 		t.Errorf(
@@ -64,6 +66,33 @@ func TestNewCertificateAuthority(t *testing.T) {
 		t.Errorf(
 			"failed NewCertificateAuthority with an error: %v",
 			err,
+		)
+	}
+}
+
+func TestNewCertificateAuthorityEcdsa(t *testing.T) {
+	cert, key, err := NewCertificateAuthority(&certutil.Config{CommonName: "kubernetes"}, "ecdsa")
+
+	if cert == nil {
+		t.Errorf(
+			"failed NewCertificateAuthority, cert == nil",
+		)
+	}
+	if key == nil {
+		t.Errorf(
+			"failed NewCertificateAuthority, key == nil",
+		)
+	}
+	if err != nil {
+		t.Errorf(
+			"failed NewCertificateAuthority with an error: %v",
+			err,
+		)
+	}
+	if _, ok := key.(*ecdsa.PrivateKey); !ok {
+		t.Errorf(
+			"failed NewCertificateAuthority, wrong type of key, got %T",
+			key,
 		)
 	}
 }
@@ -111,7 +140,7 @@ func TestNewCertAndKey(t *testing.T) {
 }
 
 func TestHasServerAuth(t *testing.T) {
-	caCert, caKey, _ := NewCertificateAuthority(&certutil.Config{CommonName: "kubernetes"})
+	caCert, caKey, _ := NewCertificateAuthority(&certutil.Config{CommonName: "kubernetes"}, "rsa")
 
 	var tests = []struct {
 		name     string
@@ -154,7 +183,56 @@ func TestHasServerAuth(t *testing.T) {
 	}
 }
 
-func TestWriteCertAndKey(t *testing.T) {
+func dontrunit_TestWriteCertAndKey(t *testing.T) {
+	var tests = []struct {
+		name     string
+		valid	bool
+		override bool
+	}{
+		{
+			name: "rsa",
+			valid: true,
+			override: false,
+		},
+		{
+			name: "ecdsa",
+			valid: true,
+			override: true,
+		},
+		/*{
+			name: "some other key type",
+			valid: false,
+		},*/
+	}
+
+	for _, rt := range tests {
+		t.Run(rt.name, func(t *testing.T) {
+			tmpdir, err := ioutil.TempDir("", "")
+			if err != nil {
+				t.Fatalf("Couldn't create tmpdir")
+			}
+			defer os.RemoveAll(tmpdir)
+
+			//caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+			//vs
+	// caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if err != nil {
+				t.Fatalf("Couldn't create rsa Private Key")
+			}
+			caCert := &x509.Certificate{}
+			actual := WriteCertAndKey(tmpdir, "foo", caCert, caKey)
+			if actual != nil {
+				t.Errorf(
+					"failed WriteCertAndKey with an error: %v",
+					actual,
+				)
+			}
+		})
+	}
+}
+
+
+func TestWriteCertAndKeyRSA(t *testing.T) {
 	tmpdir, err := ioutil.TempDir("", "")
 	if err != nil {
 		t.Fatalf("Couldn't create tmpdir")
@@ -164,6 +242,27 @@ func TestWriteCertAndKey(t *testing.T) {
 	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("Couldn't create rsa Private Key")
+	}
+	caCert := &x509.Certificate{}
+	actual := WriteCertAndKey(tmpdir, "foo", caCert, caKey)
+	if actual != nil {
+		t.Errorf(
+			"failed WriteCertAndKey with an error: %v",
+			actual,
+		)
+	}
+}
+
+func TestWriteCertAndKeyECDSA(t *testing.T) {
+	tmpdir, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatalf("Couldn't create tmpdir")
+	}
+	defer os.RemoveAll(tmpdir)
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("Couldn't create ecdsa Private Key")
 	}
 	caCert := &x509.Certificate{}
 	actual := WriteCertAndKey(tmpdir, "foo", caCert, caKey)
@@ -292,7 +391,7 @@ func TestTryLoadCertAndKeyFromDisk(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpdir)
 
-	caCert, caKey, err := NewCertificateAuthority(&certutil.Config{CommonName: "kubernetes"})
+	caCert, caKey, err := NewCertificateAuthority(&certutil.Config{CommonName: "kubernetes"}, "rsa")
 	if err != nil {
 		t.Errorf(
 			"failed to create cert and key with an error: %v",
@@ -347,7 +446,7 @@ func TestTryLoadCertFromDisk(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpdir)
 
-	caCert, _, err := NewCertificateAuthority(&certutil.Config{CommonName: "kubernetes"})
+	caCert, _, err := NewCertificateAuthority(&certutil.Config{CommonName: "kubernetes"}, "rsa")
 	if err != nil {
 		t.Errorf(
 			"failed to create cert and key with an error: %v",
@@ -402,7 +501,7 @@ func TestTryLoadKeyFromDisk(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpdir)
 
-	_, caKey, err := NewCertificateAuthority(&certutil.Config{CommonName: "kubernetes"})
+	_, caKey, err := NewCertificateAuthority(&certutil.Config{CommonName: "kubernetes"}, "rsa")
 	if err != nil {
 		t.Errorf(
 			"failed to create cert and key with an error: %v",

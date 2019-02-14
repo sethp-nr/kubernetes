@@ -18,6 +18,8 @@ package pkiutil
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
@@ -57,8 +59,14 @@ const (
 )
 
 // NewCertificateAuthority creates new certificate and private key for the certificate authority
-func NewCertificateAuthority(config *certutil.Config) (*x509.Certificate, *rsa.PrivateKey, error) {
-	key, err := NewPrivateKey()
+func NewCertificateAuthority(config *certutil.Config, keyType string) (*x509.Certificate, crypto.Signer, error) {
+	var key crypto.Signer
+	var err error
+	if keyType == "rsa" {
+		key, err = NewPrivateKey()
+	} else {
+		key, err = NewEcdsaPrivateKey()
+	}
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "unable to create private key")
 	}
@@ -71,8 +79,12 @@ func NewCertificateAuthority(config *certutil.Config) (*x509.Certificate, *rsa.P
 	return cert, key, nil
 }
 
+func NewEcdsaPrivateKey() (*ecdsa.PrivateKey, error) {
+	return ecdsa.GenerateKey(elliptic.P256(), cryptorand.Reader)
+}
+
 // NewCertAndKey creates new certificate and key by passing the certificate authority certificate and key
-func NewCertAndKey(caCert *x509.Certificate, caKey *rsa.PrivateKey, config *certutil.Config) (*x509.Certificate, *rsa.PrivateKey, error) {
+func NewCertAndKey(caCert *x509.Certificate, caKey crypto.Signer, config *certutil.Config) (*x509.Certificate, crypto.Signer, error) {
 	key, err := NewPrivateKey()
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "unable to create private key")
@@ -87,7 +99,7 @@ func NewCertAndKey(caCert *x509.Certificate, caKey *rsa.PrivateKey, config *cert
 }
 
 // NewCSRAndKey generates a new key and CSR and that could be signed to create the given certificate
-func NewCSRAndKey(config *certutil.Config) (*x509.CertificateRequest, *rsa.PrivateKey, error) {
+func NewCSRAndKey(config *certutil.Config) (*x509.CertificateRequest, crypto.Signer, error) {
 	key, err := NewPrivateKey()
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "unable to create private key")
@@ -112,7 +124,7 @@ func HasServerAuth(cert *x509.Certificate) bool {
 }
 
 // WriteCertAndKey stores certificate and key at the specified location
-func WriteCertAndKey(pkiPath string, name string, cert *x509.Certificate, key *rsa.PrivateKey) error {
+func WriteCertAndKey(pkiPath string, name string, cert *x509.Certificate, key crypto.Signer) error {
 	if err := WriteKey(pkiPath, name, key); err != nil {
 		return errors.Wrap(err, "couldn't write key")
 	}
@@ -135,13 +147,13 @@ func WriteCert(pkiPath, name string, cert *x509.Certificate) error {
 }
 
 // WriteKey stores the given key at the given location
-func WriteKey(pkiPath, name string, key *rsa.PrivateKey) error {
+func WriteKey(pkiPath, name string, key crypto.Signer) error {
 	if key == nil {
 		return errors.New("private key cannot be nil when writing to file")
 	}
 
 	privateKeyPath := pathForKey(pkiPath, name)
-	if err := certutil.WriteKey(privateKeyPath, certutil.EncodePrivateKeyPEM(key)); err != nil {
+	if err := certutil.WriteKey(privateKeyPath, EncodePrivateKeyPEM(key)); err != nil {
 		return errors.Wrapf(err, "unable to write private key to file %s", privateKeyPath)
 	}
 
@@ -214,7 +226,7 @@ func CSROrKeyExist(csrDir, name string) bool {
 }
 
 // TryLoadCertAndKeyFromDisk tries to load a cert and a key from the disk and validates that they are valid
-func TryLoadCertAndKeyFromDisk(pkiPath, name string) (*x509.Certificate, *rsa.PrivateKey, error) {
+func TryLoadCertAndKeyFromDisk(pkiPath, name string) (*x509.Certificate, crypto.Signer, error) {
 	cert, err := TryLoadCertFromDisk(pkiPath, name)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to load certificate")
@@ -254,7 +266,7 @@ func TryLoadCertFromDisk(pkiPath, name string) (*x509.Certificate, error) {
 }
 
 // TryLoadKeyFromDisk tries to load the key from the disk and validates that it is valid
-func TryLoadKeyFromDisk(pkiPath, name string) (*rsa.PrivateKey, error) {
+func TryLoadKeyFromDisk(pkiPath, name string) (crypto.Signer, error) {
 	privateKeyPath := pathForKey(pkiPath, name)
 
 	// Parse the private key from a file
@@ -264,9 +276,9 @@ func TryLoadKeyFromDisk(pkiPath, name string) (*rsa.PrivateKey, error) {
 	}
 
 	// Allow RSA format only
-	var key *rsa.PrivateKey
+	var key crypto.Signer
 	switch k := privKey.(type) {
-	case *rsa.PrivateKey:
+	case crypto.Signer:
 		key = k
 	default:
 		return nil, errors.Errorf("the private key file %s isn't in RSA format", privateKeyPath)
@@ -276,7 +288,7 @@ func TryLoadKeyFromDisk(pkiPath, name string) (*rsa.PrivateKey, error) {
 }
 
 // TryLoadCSRAndKeyFromDisk tries to load the CSR and key from the disk
-func TryLoadCSRAndKeyFromDisk(pkiPath, name string) (*x509.CertificateRequest, *rsa.PrivateKey, error) {
+func TryLoadCSRAndKeyFromDisk(pkiPath, name string) (*x509.CertificateRequest, crypto.Signer, error) {
 	csrPath := pathForCSR(pkiPath, name)
 
 	csr, err := CertificateRequestFromFile(csrPath)
@@ -293,7 +305,7 @@ func TryLoadCSRAndKeyFromDisk(pkiPath, name string) (*x509.CertificateRequest, *
 }
 
 // TryLoadPrivatePublicKeyFromDisk tries to load the key from the disk and validates that it is valid
-func TryLoadPrivatePublicKeyFromDisk(pkiPath, name string) (*rsa.PrivateKey, *rsa.PublicKey, error) {
+func TryLoadPrivatePublicKeyFromDisk(pkiPath, name string) (crypto.Signer, *rsa.PublicKey, error) {
 	privateKeyPath := pathForKey(pkiPath, name)
 
 	// Parse the private key from a file
@@ -311,7 +323,7 @@ func TryLoadPrivatePublicKeyFromDisk(pkiPath, name string) (*rsa.PrivateKey, *rs
 	}
 
 	// Allow RSA format only
-	k, ok := privKey.(*rsa.PrivateKey)
+	k, ok := privKey.(crypto.Signer)
 	if !ok {
 		return nil, nil, errors.Errorf("the private key file %s isn't in RSA format", privateKeyPath)
 	}
@@ -472,6 +484,17 @@ func EncodeCSRPEM(csr *x509.CertificateRequest) []byte {
 	return pem.EncodeToMemory(&block)
 }
 
+// EncodePrivateKeyPEM returns PEM-encoded private key data
+func EncodePrivateKeyPEM(key crypto.Signer) []byte {
+	// TODO handle ecdsa keys
+	k := key.(*rsa.PrivateKey)
+	block := pem.Block{
+		Type:  RSAPrivateKeyBlockType,
+		Bytes: x509.MarshalPKCS1PrivateKey(k),
+	}
+	return pem.EncodeToMemory(&block)
+}
+
 func parseCSRPEM(pemCSR []byte) (*x509.CertificateRequest, error) {
 	block, _ := pem.Decode(pemCSR)
 	if block == nil {
@@ -544,7 +567,7 @@ func EncodePublicKeyPEM(key *rsa.PublicKey) ([]byte, error) {
 }
 
 // NewPrivateKey creates an RSA private key
-func NewPrivateKey() (*rsa.PrivateKey, error) {
+func NewPrivateKey() (crypto.Signer, error) {
 	return rsa.GenerateKey(cryptorand.Reader, rsaKeySize)
 }
 
